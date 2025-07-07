@@ -7,7 +7,6 @@ import openpyxl
 import os
 import numpy as np
 from datetime import datetime
-from openpyxl.drawing.image import Image as XLImage
 from matplotlib.gridspec import GridSpec
 from mplfinance.original_flavor import candlestick_ohlc
 import matplotlib.dates as mdates
@@ -169,6 +168,9 @@ if uploaded_file:
 
     wb.save('stocks.xlsx')
 
+    # ✅ Debug: show collected charts
+    st.write("Charts collected:", charts)
+
     # === Build PDF ===
     pdf = FPDF()
     pdf.add_page()
@@ -196,7 +198,7 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
-    # ✅ Embed each chart page!
+    # ✅ Embed chart pages
     for chart in charts:
         pdf.add_page()
         pdf.image(chart, 10, 30, 190)
