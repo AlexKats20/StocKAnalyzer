@@ -84,8 +84,10 @@ def analyze_stock(ticker, period, freq_str):
 
     st.write(f"⏳ Downloading data for {ticker} ({actual_period}, {freq_str})")
     df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
+    if df.empty or len(df) < 26:  # Ensure enough data for MACD (slow=26)
+        raise ValueError("Insufficient data returned for the specified period and frequency.")
     df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-    df['Date_Num'] = mdates.date2num(df.index)  # Fixed: Removed to_pydatetime()
+    df['Date_Num'] = mdates.date2num(df.index)
 
     # Indicators
     df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
@@ -93,8 +95,16 @@ def analyze_stock(ticker, period, freq_str):
     df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
 
     df['RSI'] = ta.rsi(df['Close'], length=14)
-    df['MACD'] = ta.macd(df['Close'], fast=12, slow=26, signal=9)['MACD_12_26_9']
-    df['Signal'] = ta.macd(df['Close'], fast=12, slow=26, signal=9)['MACDs_12_26_9']
+    
+    # Calculate MACD with error handling
+    macd_df = ta.macd(df['Close'], fast=12, slow=26, signal=9)
+    if macd_df is None or macd_df.empty:
+        st.warning(f"MACD calculation failed for {ticker}. Using default values.")
+        df['MACD'] = 0
+        df['Signal'] = 0
+    else:
+        df['MACD'] = macd_df['MACD_12_26_9']
+        df['Signal'] = macd_df['MACDs_12_26_9']
 
     # Pattern detection using pandas_ta
     matches = []
@@ -134,9 +144,9 @@ def analyze_stock(ticker, period, freq_str):
             strength = ''
 
     # Final classification
-    rsi_val = df['RSI'].iloc[-1]
-    macd_val = df['MACD'].iloc[-1]
-    sig_val = df['Signal'].iloc[-1]
+    rsi_val = df['RSI'].iloc[-1] if not df['RSI'].isna().iloc[-1] else 50  # Fallback if RSI is NaN
+    macd_val = df['MACD'].iloc[-1] if not df['MACD'].isna().iloc[-1] else 0
+    sig_val = df['Signal'].iloc[-1] if not df['Signal'].isna().iloc[-1] else 0
     classification = (
         'Bullish' if rsi_val < 35 or (macd_val > sig_val and macd_val > -0.5)
         else 'Bearish' if rsi_val > 65 or (macd_val < sig_val and macd_val < 0.5)
