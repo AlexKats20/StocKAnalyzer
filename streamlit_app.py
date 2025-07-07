@@ -14,15 +14,16 @@ import talib
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 
-# === Streamlit ===
-st.title("📊 Stock Pattern Analyzer")
-uploaded_file = st.file_uploader("Upload your stocks.xlsx", type="xlsx")
+# === Streamlit app ===
+st.set_page_config(page_title="Stock Pattern Analyzer")
+st.title("📊 Stock Pattern Analyzer (with PDF)")
+
+uploaded_file = st.file_uploader("Upload your 'stocks.xlsx' file", type="xlsx")
 
 if uploaded_file:
     with open("stocks.xlsx", "wb") as f:
         f.write(uploaded_file.read())
 
-    # === SAME ORIGINAL LOGIC ===
     tplt = plt.get_cmap('tab10')
     PALETTE = tplt.colors
     ACCENT = '#ff6f00'
@@ -30,25 +31,29 @@ if uploaded_file:
 
     def draw_pattern_visual(ax, df, idx, pattern_name):
         bar_width = 0.6
-        if idx <= 1 or idx >= len(df): return
+        if idx <= 1 or idx >= len(df):
+            return
         involved = ([idx-2, idx-1, idx] if '3' in pattern_name or 'MORNINGSTAR' in pattern_name else [idx-1, idx])
         for i in involved:
             if 0 <= i < len(df):
                 x0 = df['Date_Num'].iloc[i] - bar_width/2
                 y0 = df['Low'].iloc[i]
                 h = df['High'].iloc[i] - df['Low'].iloc[i]
-                rect = Rectangle((x0, y0), bar_width, h, edgecolor=ACCENT, facecolor=ACCENT, alpha=0.4)
+                rect = Rectangle((x0, y0), bar_width, h,
+                                 edgecolor=ACCENT, facecolor=ACCENT, alpha=0.4)
                 ax.add_patch(rect)
 
     def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
-        if len(df) < lookback: return
+        if len(df) < lookback:
+            return
         last_channel_end = -1
         for start in range(0, len(df)-lookback, stride):
-            if start < last_channel_end: continue
+            if start < last_channel_end:
+                continue
             end = start + lookback
             x = np.arange(lookback).reshape(-1,1)
             y_high = df['High'].iloc[start:end].values.reshape(-1,1)
-            y_low = df['Low'].iloc[start:end].values.reshape(-1,1)
+            y_low  = df['Low'].iloc[start:end].values.reshape(-1,1)
             reg_high = LinearRegression().fit(x, y_high)
             reg_low  = LinearRegression().fit(x, y_low)
             slope_high, slope_low = reg_high.coef_[0][0], reg_low.coef_[0][0]
@@ -95,13 +100,19 @@ if uploaded_file:
                 idxs = np.where(result != 0)[0]
                 for idx in idxs:
                     if (df.index[-1] - df.index[idx]).days <= 10:
-                        matches.append({'name': name.replace('CDL',''), 'index': idx, 'date': df.index[idx].date(), 'strength': int(result.iloc[idx])})
+                        matches.append({
+                            'name': name.replace('CDL',''),
+                            'index': idx,
+                            'date': df.index[idx].date(),
+                            'strength': int(result.iloc[idx])
+                        })
 
         if matches:
             detected_pattern = matches[-1]['name']
             strength = f"{detected_pattern}={matches[-1]['strength']}"
         else:
-            detected_pattern = 'None'; strength = ''
+            detected_pattern = 'None'
+            strength = ''
 
         rsi_val, macd_val, sig_val = df['RSI'].iloc[-1], df['MACD'].iloc[-1], df['Signal'].iloc[-1]
         classification = 'Bullish' if rsi_val<35 or (macd_val>sig_val and macd_val>-0.5) else 'Bearish' if rsi_val>65 or (macd_val<sig_val and macd_val<0.5) else 'Neutral'
@@ -113,7 +124,8 @@ if uploaded_file:
                 if match['strength'] > 0:
                     bullish_indices.append(match['index'])
         if rsi_val < 30: bullish_indices.append(len(df)-1)
-        if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] and df['MA20'].iloc[-2] < df['MA50'].iloc[-2]: bullish_indices.append(len(df)-1)
+        if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] and df['MA20'].iloc[-2] < df['MA50'].iloc[-2]:
+            bullish_indices.append(len(df)-1)
 
         df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
         os.makedirs('charts', exist_ok=True)
@@ -128,6 +140,7 @@ if uploaded_file:
         ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':')
         ax1.set_title(f"{ticker} | {freq_str.capitalize()}")
         detect_valid_channels(df_plot, ax1)
+
         if detected_pattern != 'None':
             raw_idx = matches[-1]['index'] if matches else len(df)-1
             plot_start = len(df) - len(df_plot)
@@ -135,39 +148,53 @@ if uploaded_file:
                 idx_plot = raw_idx - plot_start
                 x0 = df_plot['Date_Num'].iloc[idx_plot]
                 y0 = df_plot['High'].iloc[idx_plot]
-                ax1.annotate(detected_pattern, xy=(x0, y0), xytext=(x0, y0*1.05), bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='black'), arrowprops=dict(arrowstyle='->'))
+                ax1.annotate(detected_pattern, xy=(x0, y0), xytext=(x0, y0*1.05),
+                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='black'),
+                             arrowprops=dict(arrowstyle='->'))
                 draw_pattern_visual(ax1, df_plot, idx_plot, detected_pattern)
+
         for idx in bullish_indices:
             if idx >= len(df)-len(df_plot):
                 x0 = df_plot['Date_Num'].iloc[idx-(len(df)-len(df_plot))]
                 y0 = df_plot['Low'].iloc[idx-(len(df)-len(df_plot))] * 0.99
                 ax1.scatter(x0, y0, color='green', marker='^', s=80)
-        ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
-        fig.autofmt_xdate(); plt.tight_layout()
-        plt.savefig(chart_path, dpi=100); plt.close(fig)
 
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        plt.savefig(chart_path, dpi=100)
+        plt.close(fig)
         return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern
 
-    # === Same Excel loop ===
-    wb = openpyxl.load_workbook('stocks.xlsx')
-    ws = wb['Current']
-    ws_h = wb['History'] if 'History' in wb.sheetnames else wb.create_sheet('History')
-    today = datetime.now().strftime('%Y-%m-%d')
-    pdf = FPDF(); pdf.add_page(); pdf.set_font('Arial','B',16)
-    pdf.cell(0,10,'Stock Report',0,1,'C'); pdf.ln(5)
+    wb = openpyxl.load_workbook("stocks.xlsx")
+    ws = wb["Current"]
+    if "History" not in wb.sheetnames:
+        ws_history = wb.create_sheet("History")
+    else:
+        ws_history = wb["History"]
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0,10,"Stock Pattern Summary Report",0,1,"C")
+    pdf.ln(5)
 
     for row in ws.iter_rows(min_row=2, max_col=3):
-        tkr, per, freq = row[0].value, row[1].value or '6mo', row[2].value or 'daily'
+        tkr = row[0].value
+        per = row[1].value or "6mo"
+        freq = row[2].value or "daily"
         if not tkr: continue
         cl, path, r, m, s, patt = analyze_stock(tkr, per, freq)
-        ws.cell(row=row[0].row,column=4).value = cl
-        ws.cell(row=row[0].row,column=5).value = path
-        ws.cell(row=row[0].row,column=6).value = patt
-        ws_h.append([today,tkr,per,freq,cl,round(r,2),round(m,2),round(s,2),patt])
-        pdf.add_page(); pdf.image(path,10,30,190)
+        ws.cell(row=row[0].row, column=4).value = cl
+        ws.cell(row=row[0].row, column=5).value = path
+        ws.cell(row=row[0].row, column=6).value = patt
+        ws_history.append([today, tkr, per, freq, cl, round(r,2), round(m,2), round(s,2), patt])
+        pdf.add_page()
+        pdf.image(path,10,30,190)
 
-    wb.save('stocks.xlsx')
-    pdf.output('stock_report.pdf')
-    st.success("✅ Done! Download your PDF:")
-    with open('stock_report.pdf','rb') as f:
-        st.download_button("📄 Download Report", f, file_name="stock_report.pdf")
+    wb.save("stocks.xlsx")
+    pdf.output("stock_report.pdf")
+    st.success("✅ Done! Download your PDF below:")
+    with open("stock_report.pdf", "rb") as f:
+        st.download_button("📄 Download PDF Report", f, file_name="stock_report.pdf")
