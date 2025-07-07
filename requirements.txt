@@ -1,8 +1,8 @@
-streamlit
-yfinance
-matplotlib
-numpy
-mplfinance
-scikit-learn
-pandas_ta
-pandas
+streamlit==1.38.0
+yfinance==0.2.44
+matplotlib==3.9.2
+numpy==1.26.4
+mplfinance==0.12.10b0
+scikit-learn==1.5.2
+pandas==2.2.3
+pandas_ta==0.3.14b0
