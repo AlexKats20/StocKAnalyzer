@@ -5,3 +5,4 @@ numpy
 mplfinance
 scikit-learn
 pandas_ta
+pandas
