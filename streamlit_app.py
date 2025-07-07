@@ -31,9 +31,9 @@ if uploaded_file:
     plt.style.use('default')
 
     candlestick_patterns = [
-        "doji", "dragonflydoji", "hammer", "invertedhammer",
-        "marubozu", "spinningtop", "engulfing", "morningstar",
-        "shootingstar", "eveningstar"
+        "engulfing", "hammer", "invertedhammer",
+        "morningstar", "shootingstar", "spinningtop",
+        "doji", "dragonflydoji"
     ]
 
     def draw_pattern_visual(ax, df, idx, pattern_name):
@@ -102,15 +102,15 @@ if uploaded_file:
 
         matches = []
         for name in candlestick_patterns:
-            result = ta.cdl_pattern(name=name, open_=df['Open'], high_=df['High'],
-                                    low_=df['Low'], close_=df['Close'])
+            pattern_func = getattr(ta, f'cdl_{name}')
+            result = pattern_func(open_=df['Open'], high_=df['High'],
+                                  low_=df['Low'], close_=df['Close'])
             idxs = np.where(result != 0)[0]
             for idx in idxs:
                 if (df.index[-1] - df.index[idx]).days <= 10:
                     matches.append({
                         'name': name.upper(),
                         'index': idx,
-                        'date': df.index[idx].date(),
                         'strength': int(result.iloc[idx])
                     })
 
