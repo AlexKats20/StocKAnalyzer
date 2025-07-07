@@ -1,10 +1,7 @@
 streamlit
 yfinance
 matplotlib
-openpyxl
-pandas
 numpy
-fpdf
-scikit-learn
 mplfinance
-pandas-ta
+scikit-learn
+ta-lib==0.4.32
