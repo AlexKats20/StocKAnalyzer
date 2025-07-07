@@ -9,7 +9,7 @@ from matplotlib.gridspec import GridSpec
 from mplfinance.original_flavor import candlestick_ohlc
 import matplotlib.dates as mdates
 import pandas as pd
-import pandas_ta as ta
+import talib
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 
@@ -59,16 +59,14 @@ def analyze_stock(ticker, period, freq_str):
     df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
     df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
     df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
-    df['RSI'] = ta.rsi(df['Close'], length=14)
-    macd = ta.macd(df['Close'])
-    df['MACD'] = macd['MACD_12_26_9']
-    df['Signal'] = macd['MACDs_12_26_9']
+    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
+    macd, macdsignal, macdhist = talib.MACD(df['Close'])
+    df['MACD'] = macd
+    df['Signal'] = macdsignal
 
-    # === Pattern detection example ===
-    detected_pattern = 'None'
-    df['SPIN'] = ta.cdl_pattern(name='spinningtop', open_=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])
-    if df['SPIN'].iloc[-1] != 0:
-        detected_pattern = 'SPINNINGTOP'
+    # === Pattern detection ===
+    result = talib.CDLSPINNINGTOP(df['Open'], df['High'], df['Low'], df['Close'])
+    detected_pattern = 'SPINNINGTOP' if np.any(result != 0) else 'None'
 
     # === Classification ===
     rsi_val = df['RSI'].iloc[-1]
@@ -80,7 +78,7 @@ def analyze_stock(ticker, period, freq_str):
         else 'Neutral'
     )
 
-    # === Candlestick Chart ===
+    # === Candlestick chart ===
     df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
     fig = plt.figure(figsize=(12,8))
     gs = GridSpec(4,1, height_ratios=[3,1,1,1])
@@ -94,7 +92,6 @@ def analyze_stock(ticker, period, freq_str):
     ax1.set_title(f"{ticker} | {freq_str.capitalize()} Chart")
     ax1.legend(loc='upper left')
     ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
-
     ax2 = fig.add_subplot(gs[1], sharex=ax1)
     ax2.bar(df_plot['Date_Num'], df_plot['Volume'], color='gray')
     ax3 = fig.add_subplot(gs[2], sharex=ax1)
@@ -113,7 +110,7 @@ def analyze_stock(ticker, period, freq_str):
     plt.savefig(chart_path, dpi=100)
     plt.close(fig)
 
-    return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern, ""
+    return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern
 
 # === Streamlit App ===
 st.title("📊 Stock Pattern Analyzer")
@@ -136,11 +133,10 @@ if uploaded_file:
     for row in ws_current.iter_rows(min_row=2, max_col=3):
         tkr = row[0].value; per = row[1].value or '6mo'; freq = row[2].value or 'daily'
         if tkr:
-            cl, path, r, m, s, patt, strg = analyze_stock(tkr, per, freq)
+            cl, path, r, m, s, patt = analyze_stock(tkr, per, freq)
             ws_current.cell(row=row[0].row, column=4).value = cl
             ws_current.cell(row=row[0].row, column=5).value = path
             ws_current.cell(row=row[0].row, column=6).value = patt
-            ws_current.cell(row=row[0].row, column=7).value = strg
             if path and os.path.exists(path):
                 charts.append({'ticker': tkr, 'path': path, 'pattern': patt, 'period': per, 'freq': freq})
             ws_history.append([today,tkr,per,freq,cl,round(r or 0,2),round(m or 0,2),round(s or 0,2),patt])
@@ -175,7 +171,6 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
-    # === Add each stock's full section
     for item in charts:
         ticker, path, pattern, period, freq = item['ticker'], item['path'], item['pattern'], item['period'], item['freq']
 
@@ -185,11 +180,10 @@ if uploaded_file:
             pdf.cell(0,10,f"{ticker} | Pattern: {pattern}",0,1,'C')
             pdf.image(path, 10, 30, 190)
 
-        # Occurrences chart
+        # === Occurrences Chart ===
         df_full = yf.Ticker(ticker).history(period=period, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq.lower(),'1d'))
         df_full = df_full[['Open','High','Low','Close']].dropna()
-        df_full['Date_Num'] = mdates.date2num(df_full.index.to_pydatetime())
-        result = ta.cdl_pattern(name='spinningtop', open_=df_full['Open'], high=df_full['High'], low=df_full['Low'], close=df_full['Close'])
+        result = talib.CDLSPINNINGTOP(df_full['Open'], df_full['High'], df_full['Low'], df_full['Close'])
         occ_idx = np.where(result != 0)[0]
         fig2, ax2 = plt.subplots(figsize=(8,4))
         ax2.plot(df_full.index, df_full['Close'], label='Close')
@@ -203,17 +197,16 @@ if uploaded_file:
         pdf.image(tmp_occ, 10, 30, 190)
         os.remove(tmp_occ)
 
-        # Top 20 pattern table
+        # === Top 20 Patterns ===
         pattern_counts = {}
-        for name in dir(ta):
-            if name.startswith('cdl'):
-                try:
-                    r = ta.cdl_pattern(name=name.replace('cdl_',''), open_=df_full['Open'], high=df_full['High'], low=df_full['Low'], close=df_full['Close'])
-                    count = (r != 0).sum()
-                    if count > 0:
-                        pattern_counts[name.upper()] = count
-                except:
-                    continue
+        for name in dir(talib):
+            if name.startswith('CDL'):
+                func = getattr(talib, name)
+                result = func(df_full['Open'], df_full['High'], df_full['Low'], df_full['Close'])
+                count = np.sum(result != 0)
+                if count > 0:
+                    pattern_counts[name.replace('CDL','')] = int(count)
+
         top_patterns = sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)[:20]
         pdf.add_page()
         pdf.set_font('Arial','B',12)
@@ -230,6 +223,6 @@ if uploaded_file:
             pdf.ln()
 
     pdf.output("stock_report.pdf")
-    st.success("✅ PDF is ready with all charts, occurrences, and tables!")
+    st.success("✅ PDF ready with all charts, occurrences & top 20 patterns!")
     with open("stock_report.pdf","rb") as f:
         st.download_button("📄 Download PDF", f, file_name="stock_report.pdf")
