@@ -9,7 +9,7 @@ from matplotlib.gridspec import GridSpec
 from mplfinance.original_flavor import candlestick_ohlc
 import matplotlib.dates as mdates
 import pandas as pd
-import talib
+import pandas_ta as ta
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 
@@ -59,13 +59,14 @@ def analyze_stock(ticker, period, freq_str):
     df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
     df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
     df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
-    df['RSI'] = talib.RSI(df['Close'], timeperiod=14)
-    macd, macdsignal, macdhist = talib.MACD(df['Close'])
-    df['MACD'] = macd
-    df['Signal'] = macdsignal
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    macd = ta.macd(df['Close'])
+    df['MACD'] = macd['MACD_12_26_9']
+    df['Signal'] = macd['MACDs_12_26_9']
 
     # === Pattern detection ===
-    result = talib.CDLSPINNINGTOP(df['Open'], df['High'], df['Low'], df['Close'])
+    result = ta.cdl_pattern(name='spinningtop', open_=df['Open'], high_=df['High'],
+                            low_=df['Low'], close_=df['Close'])
     detected_pattern = 'SPINNINGTOP' if np.any(result != 0) else 'None'
 
     # === Classification ===
@@ -113,7 +114,7 @@ def analyze_stock(ticker, period, freq_str):
     return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern
 
 # === Streamlit App ===
-st.title("📊 Stock Pattern Analyzer")
+st.title("📊 Stock Pattern Analyzer (pandas-ta only)")
 
 uploaded_file = st.file_uploader("Upload your stocks.xlsx file", type="xlsx")
 if uploaded_file:
@@ -173,17 +174,16 @@ if uploaded_file:
 
     for item in charts:
         ticker, path, pattern, period, freq = item['ticker'], item['path'], item['pattern'], item['period'], item['freq']
-
         if os.path.exists(path):
             pdf.add_page()
             pdf.set_font('Arial','B',14)
             pdf.cell(0,10,f"{ticker} | Pattern: {pattern}",0,1,'C')
             pdf.image(path, 10, 30, 190)
 
-        # === Occurrences Chart ===
         df_full = yf.Ticker(ticker).history(period=period, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq.lower(),'1d'))
         df_full = df_full[['Open','High','Low','Close']].dropna()
-        result = talib.CDLSPINNINGTOP(df_full['Open'], df_full['High'], df_full['Low'], df_full['Close'])
+        result = ta.cdl_pattern(name='spinningtop', open_=df_full['Open'], high_=df_full['High'],
+                                low_=df_full['Low'], close_=df_full['Close'])
         occ_idx = np.where(result != 0)[0]
         fig2, ax2 = plt.subplots(figsize=(8,4))
         ax2.plot(df_full.index, df_full['Close'], label='Close')
@@ -197,15 +197,13 @@ if uploaded_file:
         pdf.image(tmp_occ, 10, 30, 190)
         os.remove(tmp_occ)
 
-        # === Top 20 Patterns ===
         pattern_counts = {}
-        for name in dir(talib):
-            if name.startswith('CDL'):
-                func = getattr(talib, name)
-                result = func(df_full['Open'], df_full['High'], df_full['Low'], df_full['Close'])
-                count = np.sum(result != 0)
-                if count > 0:
-                    pattern_counts[name.replace('CDL','')] = int(count)
+        for name in ta.cdl_pattern._patterns.keys():
+            r = ta.cdl_pattern(name=name, open_=df_full['Open'], high_=df_full['High'],
+                               low_=df_full['Low'], close_=df_full['Close'])
+            count = np.sum(r != 0)
+            if count > 0:
+                pattern_counts[name.upper()] = int(count)
 
         top_patterns = sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)[:20]
         pdf.add_page()
