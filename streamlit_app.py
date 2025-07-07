@@ -9,7 +9,6 @@ import numpy as np
 from datetime import datetime
 from openpyxl.drawing.image import Image as XLImage
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import Rectangle
 from mplfinance.original_flavor import candlestick_ohlc
 import matplotlib.dates as mdates
 import pandas as pd
@@ -197,9 +196,10 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
+    # ✅ Embed each chart page!
     for chart in charts:
         pdf.add_page()
-        pdf.image(chart,10,30,190)
+        pdf.image(chart, 10, 30, 190)
 
     pdf.output("stock_report.pdf")
 
