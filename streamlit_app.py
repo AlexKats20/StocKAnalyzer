@@ -19,6 +19,22 @@ PALETTE = tplt.colors
 ACCENT = '#00c853'
 plt.style.use('default')
 
+# === Candlestick pattern names (static list) ===
+candlestick_patterns = [
+    "2crows", "3blackcrows", "3inside", "3line_strike", "3outside", "3starsinsouth",
+    "3whitesoldiers", "abandonedbaby", "advanceblock", "belthold", "breakaway",
+    "closingmarubozu", "concealbabyswall", "counterattack", "darkcloudcover", "doji",
+    "dojistar", "dragonflydoji", "engulfing", "eveningdojistar", "eveningstar",
+    "gapsidesidewhite", "gravestonedoji", "hammer", "hangingman", "harami",
+    "haramicross", "highwave", "hikkake", "hikkakemod", "homingpigeon",
+    "identical3crows", "inneck", "inside", "invertedhammer", "kicking", "kickingbylength",
+    "ladderbottom", "longleggeddoji", "longline", "marubozu", "matchinglow",
+    "mathold", "morningdojistar", "morningstar", "onneck", "piercing", "rickshawman",
+    "risefall3methods", "separatinglines", "shootingstar", "shortline", "spinningtop",
+    "stalledpattern", "sticksandwich", "takuri", "tasuki", "thrusting", "tristar",
+    "unique3river", "upsidegap2crows", "xsidegap3methods"
+]
+
 # === Channel detection ===
 def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
     if len(df) < lookback:
@@ -64,7 +80,7 @@ def analyze_stock(ticker, period, freq_str):
     df['MACD'] = macd['MACD_12_26_9']
     df['Signal'] = macd['MACDs_12_26_9']
 
-    # === Pattern detection using robust pandas-ta ===
+    # === Pattern detection ===
     result = df.ta.cdl_pattern(pattern="spinningtop")
     detected_pattern = 'SPINNINGTOP' if np.any(result != 0) else 'None'
 
@@ -196,7 +212,7 @@ if uploaded_file:
         os.remove(tmp_occ)
 
         pattern_counts = {}
-        for name in df_full.ta.cdl_pattern._patterns.keys():
+        for name in candlestick_patterns:
             try:
                 r = df_full.ta.cdl_pattern(pattern=name)
                 count = np.sum(r != 0)
