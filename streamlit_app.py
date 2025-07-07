@@ -81,18 +81,24 @@ def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
 def analyze_stock(ticker, period, freq_str):
     freq_map = {'Daily': '1d', 'Weekly': '1wk', 'Monthly': '1mo'}
     interval = freq_map.get(freq_str, '1d')
-    actual_period = 'max' if period.lower() == 'max' else period
+    actual_period = 'max'  # Fetch max data first, then trim
 
-    st.write(f"⏳ Downloading data for {ticker} ({actual_period}, {freq_str})")
+    st.write(f"⏳ Downloading data for {ticker} ({actual_period} initially, trimming to {period}, {freq_str})")
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
             df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
             if df.empty:
-                raise ValueError("No data returned for the specified ticker, period, or frequency.")
+                raise ValueError("No data returned for the specified ticker.")
             df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-            if len(df) < 5:  # Minimum for basic indicators (e.g., RSI)
-                raise ValueError(f"Only {len(df)} rows of data available, which is insufficient.")
+            # Trim to requested period if not 'max'
+            if period.lower() != 'max':
+                end_date = datetime.now()
+                start_date = end_date - pd.DateOffset(months={'1mo': 1, '3mo': 3, '6mo': 6, '1y': 12, '2y': 24, '5y': 60}[period.lower()])
+                df = df[df.index >= start_date]
+            if len(df) < 1:  # Minimum 1 row to proceed
+                raise ValueError(f"Only {len(df)} rows of data available after trimming, which is insufficient.")
+            st.write(f"Successfully fetched {len(df)} rows of data.")
             break
         except Exception as e:
             if attempt < max_attempts - 1:
@@ -108,13 +114,13 @@ def analyze_stock(ticker, period, freq_str):
     df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
     df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
 
-    df['RSI'] = ta.rsi(df['Close'], length=14)
+    df['RSI'] = ta.rsi(df['Close'], length=14) if len(df) >= 14 else pd.Series([50] * len(df), index=df.index)
     
     # Calculate MACD with dynamic parameters based on data length
-    min_periods = max(5, min(len(df), 26))  # Ensure at least 5 periods
-    macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9)
-    if macd_df is None or macd_df.empty or len(df) < min_periods:
-        st.warning(f"MACD calculation requires {min_periods} periods but got {len(df)}. Using default values.")
+    min_periods = max(1, min(len(df), 26))  # Ensure at least 1 period
+    macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9) if len(df) >= min_periods else None
+    if macd_df is None or macd_df.empty:
+        st.warning(f"MACD requires {min_periods} periods but got {len(df)}. Using default values.")
         df['MACD'] = 0
         df['Signal'] = 0
     else:
@@ -123,7 +129,7 @@ def analyze_stock(ticker, period, freq_str):
 
     # Pattern detection using pandas_ta
     matches = []
-    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name='all')
+    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name='all') if len(df) >= 3 else pd.DataFrame()
     for col in candles.columns:
         idxs = np.where(candles[col] != 0)[0]
         for idx in idxs:
@@ -243,7 +249,7 @@ def analyze_stock(ticker, period, freq_str):
 
     # Pattern Occurrence Chart
     df_occ = df.tail(250 if interval == '1d' else 52 if interval == '1wk' else 24) if actual_period != 'max' else df
-    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name=detected_pattern.lower())
+    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name=detected_pattern.lower()) if len(df) >= 3 else pd.DataFrame()
     occ_idx = np.where(candles.iloc[:, 0] != 0)[0] if not candles.empty else []
     occ_idx_plot = [i for i in occ_idx if i >= len(df) - len(df_occ)]
 
