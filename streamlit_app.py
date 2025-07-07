@@ -84,9 +84,13 @@ def analyze_stock(ticker, period, freq_str):
 
     st.write(f"⏳ Downloading data for {ticker} ({actual_period}, {freq_str})")
     df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
-    if df.empty or len(df) < 26:  # Ensure enough data for MACD (slow=26)
-        raise ValueError("Insufficient data returned for the specified period and frequency.")
+    if df.empty:
+        raise ValueError("No data returned for the specified ticker, period, or frequency.")
     df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+    if len(df) < 14:  # Minimum for fast=12 MACD
+        st.warning(f"Insufficient data ({len(df)} rows) for {ticker}. Try a longer period (e.g., 3mo or 6mo) or different frequency (e.g., Daily).")
+        raise ValueError("Insufficient data returned for the specified period and frequency.")
+    
     df['Date_Num'] = mdates.date2num(df.index)
 
     # Indicators
@@ -96,15 +100,16 @@ def analyze_stock(ticker, period, freq_str):
 
     df['RSI'] = ta.rsi(df['Close'], length=14)
     
-    # Calculate MACD with error handling
-    macd_df = ta.macd(df['Close'], fast=12, slow=26, signal=9)
+    # Calculate MACD with dynamic parameters based on data length
+    min_periods = min(len(df), 26)  # Use available data, up to slow=26
+    macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9)
     if macd_df is None or macd_df.empty:
         st.warning(f"MACD calculation failed for {ticker}. Using default values.")
         df['MACD'] = 0
         df['Signal'] = 0
     else:
-        df['MACD'] = macd_df['MACD_12_26_9']
-        df['Signal'] = macd_df['MACDs_12_26_9']
+        df['MACD'] = macd_df['MACD_12_{}_9'.format(min_periods)]
+        df['Signal'] = macd_df['MACDs_12_{}_9'.format(min_periods)]
 
     # Pattern detection using pandas_ta
     matches = []
@@ -144,7 +149,7 @@ def analyze_stock(ticker, period, freq_str):
             strength = ''
 
     # Final classification
-    rsi_val = df['RSI'].iloc[-1] if not df['RSI'].isna().iloc[-1] else 50  # Fallback if RSI is NaN
+    rsi_val = df['RSI'].iloc[-1] if not df['RSI'].isna().iloc[-1] else 50
     macd_val = df['MACD'].iloc[-1] if not df['MACD'].isna().iloc[-1] else 0
     sig_val = df['Signal'].iloc[-1] if not df['Signal'].isna().iloc[-1] else 0
     classification = (
@@ -248,6 +253,7 @@ def analyze_stock(ticker, period, freq_str):
 # Streamlit App
 st.title("Stock Pattern Analysis")
 st.write("Enter a stock ticker and select analysis parameters to view technical analysis results.")
+st.info("For short periods (e.g., 1mo) with Monthly frequency, select a longer period (e.g., 3mo or 6mo) or Daily/Weekly frequency to ensure sufficient data.")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL)", "AAPL")
 period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
