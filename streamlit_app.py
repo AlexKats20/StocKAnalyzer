@@ -13,26 +13,23 @@ import pandas_ta as ta
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 
-# === Style ===
+# === Styles ===
 tplt = plt.get_cmap('tab10')
 PALETTE = tplt.colors
 ACCENT = '#00c853'
 plt.style.use('default')
 
-# === Candlestick pattern names (static list) ===
+# === Candlestick pattern names ===
 candlestick_patterns = [
-    "2crows", "3blackcrows", "3inside", "3line_strike", "3outside", "3starsinsouth",
-    "3whitesoldiers", "abandonedbaby", "advanceblock", "belthold", "breakaway",
-    "closingmarubozu", "concealbabyswall", "counterattack", "darkcloudcover", "doji",
-    "dojistar", "dragonflydoji", "engulfing", "eveningdojistar", "eveningstar",
-    "gapsidesidewhite", "gravestonedoji", "hammer", "hangingman", "harami",
-    "haramicross", "highwave", "hikkake", "hikkakemod", "homingpigeon",
-    "identical3crows", "inneck", "inside", "invertedhammer", "kicking", "kickingbylength",
-    "ladderbottom", "longleggeddoji", "longline", "marubozu", "matchinglow",
-    "mathold", "morningdojistar", "morningstar", "onneck", "piercing", "rickshawman",
-    "risefall3methods", "separatinglines", "shootingstar", "shortline", "spinningtop",
-    "stalledpattern", "sticksandwich", "takuri", "tasuki", "thrusting", "tristar",
-    "unique3river", "upsidegap2crows", "xsidegap3methods"
+    "2crows","3blackcrows","3inside","3line_strike","3outside","3starsinsouth","3whitesoldiers",
+    "abandonedbaby","advanceblock","belthold","breakaway","closingmarubozu","concealbabyswall",
+    "counterattack","darkcloudcover","doji","dojistar","dragonflydoji","engulfing","eveningdojistar",
+    "eveningstar","gapsidesidewhite","gravestonedoji","hammer","hangingman","harami","haramicross",
+    "highwave","hikkake","hikkakemod","homingpigeon","identical3crows","inneck","inside","invertedhammer",
+    "kicking","kickingbylength","ladderbottom","longleggeddoji","longline","marubozu","matchinglow",
+    "mathold","morningdojistar","morningstar","onneck","piercing","rickshawman","risefall3methods",
+    "separatinglines","shootingstar","shortline","spinningtop","stalledpattern","sticksandwich",
+    "takuri","tasuki","thrusting","tristar","unique3river","upsidegap2crows","xsidegap3methods"
 ]
 
 # === Channel detection ===
@@ -71,7 +68,7 @@ def analyze_stock(ticker, period, freq_str):
     df = df[['Open','High','Low','Close','Volume']].dropna()
     df['Date_Num'] = mdates.date2num(df.index.to_pydatetime())
 
-    # === Indicators ===
+    # Indicators
     df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
     df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
     df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
@@ -81,8 +78,19 @@ def analyze_stock(ticker, period, freq_str):
     df['Signal'] = macd['MACDs_12_26_9']
 
     # === Pattern detection ===
-    result = df.ta.cdl_pattern(pattern="spinningtop")
-    detected_pattern = 'SPINNINGTOP' if np.any(result != 0) else 'None'
+    detected_pattern = 'None'
+    latest_idx = -1
+    for name in candlestick_patterns:
+        try:
+            result = df.ta.cdl_pattern(pattern=name)
+            if isinstance(result, pd.DataFrame):
+                result = result.iloc[:,0]
+            idxs = np.where(result != 0)[0]
+            if len(idxs) > 0 and idxs[-1] > latest_idx:
+                detected_pattern = name.upper()
+                latest_idx = idxs[-1]
+        except Exception:
+            continue
 
     # === Classification ===
     rsi_val = df['RSI'].iloc[-1]
@@ -94,7 +102,7 @@ def analyze_stock(ticker, period, freq_str):
         else 'Neutral'
     )
 
-    # === Candlestick chart ===
+    # === Plot main chart ===
     df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
     fig = plt.figure(figsize=(12,8))
     gs = GridSpec(4,1, height_ratios=[3,1,1,1])
@@ -105,6 +113,15 @@ def analyze_stock(ticker, period, freq_str):
     ax1.plot(df_plot['Date_Num'], df_plot['MA50'], color=PALETTE[1], lw=1.5, linestyle='--', label='MA50')
     ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
     detect_valid_channels(df_plot, ax1)
+    if detected_pattern != 'None':
+        plot_start = len(df) - len(df_plot)
+        if latest_idx >= plot_start:
+            idx_plot = latest_idx - plot_start
+            x0 = df_plot['Date_Num'].iloc[idx_plot]
+            y0 = df_plot['High'].iloc[idx_plot]
+            ax1.annotate(detected_pattern, xy=(x0, y0), xytext=(x0, y0 * 1.05),
+                         bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='black'),
+                         arrowprops=dict(arrowstyle='->'))
     ax1.set_title(f"{ticker} | {freq_str.capitalize()} Chart")
     ax1.legend(loc='upper left')
     ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
@@ -122,14 +139,17 @@ def analyze_stock(ticker, period, freq_str):
     ax4.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
     fig.autofmt_xdate()
     plt.tight_layout()
-    chart_path = f"{ticker}_chart.png"
+    chart_dir = 'charts'
+    os.makedirs(chart_dir, exist_ok=True)
+    ts = datetime.now().strftime('%Y%m%d%H%M%S')
+    chart_path = f"{chart_dir}/{ticker}_{ts}.png"
     plt.savefig(chart_path, dpi=100)
     plt.close(fig)
 
     return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern
 
-# === Streamlit App ===
-st.title("📊 Stock Pattern Analyzer (pandas-ta only)")
+# === Streamlit front-end ===
+st.title("📊 Stock Pattern Analyzer (pandas-ta)")
 
 uploaded_file = st.file_uploader("Upload your stocks.xlsx file", type="xlsx")
 if uploaded_file:
@@ -143,9 +163,10 @@ if uploaded_file:
         ws_history.append(['Date','Ticker','Period','Freq','Classification','RSI','MACD','Signal','Pattern'])
     else:
         ws_history = wb['History']
-    today = datetime.now().strftime('%Y-%m-%d')
 
+    today = datetime.now().strftime('%Y-%m-%d')
     charts = []
+
     for row in ws_current.iter_rows(min_row=2, max_col=3):
         tkr = row[0].value; per = row[1].value or '6mo'; freq = row[2].value or 'daily'
         if tkr:
@@ -153,15 +174,13 @@ if uploaded_file:
             ws_current.cell(row=row[0].row, column=4).value = cl
             ws_current.cell(row=row[0].row, column=5).value = path
             ws_current.cell(row=row[0].row, column=6).value = patt
-            if path and os.path.exists(path):
-                charts.append({'ticker': tkr, 'path': path, 'pattern': patt, 'period': per, 'freq': freq})
+            charts.append({'ticker': tkr, 'path': path, 'pattern': patt, 'period': per, 'freq': freq})
             ws_history.append([today,tkr,per,freq,cl,round(r or 0,2),round(m or 0,2),round(s or 0,2),patt])
 
     wb.save('stocks.xlsx')
 
-    st.write("✅ Charts collected:", charts)
-
     pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font('Arial','B',16)
     pdf.cell(0,10,'Stock Pattern Summary Report',0,1,'C')
@@ -170,6 +189,7 @@ if uploaded_file:
     pdf.cell(30,10,'Date:'); pdf.cell(50,10,today,0,1)
     pdf.ln(5)
 
+    # === Summary Table ===
     pdf.set_font('Arial','B',11)
     pdf.cell(30,10,'Ticker',1)
     pdf.cell(25,10,'Period',1)
@@ -187,23 +207,32 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
+    # === For each stock ===
     for item in charts:
-        ticker, path, pattern, period, freq = item['ticker'], item['path'], item['pattern'], item['period'], item['freq']
-        if os.path.exists(path):
-            pdf.add_page()
-            pdf.set_font('Arial','B',14)
-            pdf.cell(0,10,f"{ticker} | Pattern: {pattern}",0,1,'C')
-            pdf.image(path, 10, 30, 190)
+        ticker, chart_path, pattern, period, freq = item['ticker'], item['path'], item['pattern'], item['period'], item['freq']
+        if not os.path.exists(chart_path): continue
 
+        # === Main Chart Page ===
+        pdf.add_page()
+        pdf.set_font('Arial','B',14)
+        pdf.cell(0,10,f"{ticker} | Pattern: {pattern}",0,1,'C')
+        pdf.image(chart_path, 10, 30, 190)
+
+        # === Pattern Occurrences Page ===
         df_full = yf.Ticker(ticker).history(period=period, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq.lower(),'1d'))
         df_full = df_full[['Open','High','Low','Close']].dropna()
-        result = df_full.ta.cdl_pattern(pattern="spinningtop")
-        occ_idx = np.where(result != 0)[0]
+        result = df_full.ta.cdl_pattern(pattern=pattern.lower()) if pattern != 'None' else None
+        occ_idx = []
+        if result is not None:
+            if isinstance(result, pd.DataFrame):
+                result = result.iloc[:,0]
+            occ_idx = np.where(result != 0)[0]
+
         fig2, ax2 = plt.subplots(figsize=(8,4))
         ax2.plot(df_full.index, df_full['Close'], label='Close')
-        if len(occ_idx):
+        if occ_idx:
             ax2.scatter(df_full.index[occ_idx], df_full['Close'].iloc[occ_idx], color=ACCENT)
-        ax2.set_title(f"{ticker} Occurrences: {len(occ_idx)}")
+        ax2.set_title(f"{ticker} Occurrences of {pattern}")
         tmp_occ = f"{ticker}_occ.png"
         fig2.savefig(tmp_occ, dpi=100)
         plt.close(fig2)
@@ -211,32 +240,57 @@ if uploaded_file:
         pdf.image(tmp_occ, 10, 30, 190)
         os.remove(tmp_occ)
 
+        # === Top 20 Pattern Frequencies Page ===
         pattern_counts = {}
+        pattern_returns = {}
         for name in candlestick_patterns:
             try:
                 r = df_full.ta.cdl_pattern(pattern=name)
-                count = np.sum(r != 0)
-                if count > 0:
-                    pattern_counts[name.upper()] = int(count)
+                if isinstance(r, pd.DataFrame):
+                    r = r.iloc[:,0]
+                idxs = np.where(r != 0)[0]
+                fwd_1y, fwd_2y = [], []
+                for idx_p in idxs:
+                    if idx_p + 252 < len(df_full):
+                        start = df_full['Close'].iloc[idx_p]
+                        end1 = df_full['Close'].iloc[idx_p+252]
+                        fwd_1y.append((end1 - start)/start)
+                    if idx_p + 504 < len(df_full):
+                        start = df_full['Close'].iloc[idx_p]
+                        end2 = df_full['Close'].iloc[idx_p+504]
+                        fwd_2y.append((end2 - start)/start)
+                if len(idxs) > 0:
+                    pattern_counts[name.upper()] = len(idxs)
+                    pattern_returns[name.upper()] = {
+                        '1Y': np.mean(fwd_1y)*100 if fwd_1y else None,
+                        '2Y': np.mean(fwd_2y)*100 if fwd_2y else None
+                    }
             except:
                 continue
 
         top_patterns = sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)[:20]
         pdf.add_page()
         pdf.set_font('Arial','B',12)
-        pdf.cell(0,10,f"{ticker} | Top 20 Patterns",0,1,'C')
+        pdf.cell(0,10,f"{ticker} | Top 20 Pattern Frequencies",0,1,'C')
         pdf.ln(4)
         pdf.set_font('Arial','B',10)
         pdf.cell(60,8,'Pattern Name',1)
-        pdf.cell(30,8,'Occurrences',1)
+        pdf.cell(25,8,'Occurrences',1)
+        pdf.cell(30,8,'1Y Avg %',1)
+        pdf.cell(30,8,'2Y Avg %',1)
         pdf.ln()
         pdf.set_font('Arial','',10)
         for pname, pcount in top_patterns:
+            r1 = pattern_returns.get(pname, {}).get('1Y')
+            r2 = pattern_returns.get(pname, {}).get('2Y')
             pdf.cell(60,8,pname,1)
-            pdf.cell(30,8,str(pcount),1)
+            pdf.cell(25,8,str(pcount),1)
+            pdf.cell(30,8,f"{r1:.2f}%" if r1 is not None else '-',1)
+            pdf.cell(30,8,f"{r2:.2f}%" if r2 is not None else '-',1)
             pdf.ln()
 
     pdf.output("stock_report.pdf")
-    st.success("✅ PDF ready with all charts, occurrences & top 20 patterns!")
+    st.success("✅ PDF ready! Download below:")
     with open("stock_report.pdf","rb") as f:
-        st.download_button("📄 Download PDF", f, file_name="stock_report.pdf")
+        st.download_button("📄 Download Report", f, file_name="stock_report.pdf")
+
