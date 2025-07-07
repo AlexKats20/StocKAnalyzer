@@ -4,4 +4,4 @@ matplotlib
 numpy
 mplfinance
 scikit-learn
-ta-lib==0.4.32
+pandas_ta
