@@ -1,11 +1,10 @@
 streamlit
 yfinance
-openpyxl
 matplotlib
+openpyxl
 pandas
-numpy>=1.24,<2.0
+numpy
 fpdf
 scikit-learn
-pandas-ta
 mplfinance
-setuptools
+pandas-ta
