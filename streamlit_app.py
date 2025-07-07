@@ -46,93 +46,74 @@ def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
 
 # === Stock Analysis ===
 def analyze_stock(ticker, period, freq_str):
-    try:
-        freq_map = {'daily':'1d', 'weekly':'1wk', 'monthly':'1mo'}
-        interval = freq_map.get(freq_str.lower(), '1d')
-        actual_period = 'max' if str(period).lower() == 'max' else period
+    freq_map = {'daily':'1d', 'weekly':'1wk', 'monthly':'1mo'}
+    interval = freq_map.get(freq_str.lower(), '1d')
+    actual_period = 'max' if str(period).lower() == 'max' else period
 
-        df = yf.Ticker(ticker).history(period=actual_period, interval=interval,
-                                       auto_adjust=False, prepost=True)
-        df = df[['Open','High','Low','Close','Volume']].dropna()
-        df['Date_Num'] = mdates.date2num(df.index.to_pydatetime())
+    df = yf.Ticker(ticker).history(period=actual_period, interval=interval,
+                                   auto_adjust=False, prepost=True)
+    df = df[['Open','High','Low','Close','Volume']].dropna()
+    df['Date_Num'] = mdates.date2num(df.index.to_pydatetime())
 
-        # === Indicators ===
-        df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
-        df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
-        df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        macd = ta.macd(df['Close'])
-        df['MACD'] = macd['MACD_12_26_9']
-        df['Signal'] = macd['MACDs_12_26_9']
+    # === Indicators ===
+    df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
+    df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
+    df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    macd = ta.macd(df['Close'])
+    df['MACD'] = macd['MACD_12_26_9']
+    df['Signal'] = macd['MACDs_12_26_9']
 
-        # === Classification ===
-        rsi_val = df['RSI'].iloc[-1]
-        macd_val = df['MACD'].iloc[-1]
-        sig_val = df['Signal'].iloc[-1]
-        classification = (
-            'Bullish' if rsi_val<35 or (macd_val>sig_val and macd_val>-0.5)
-            else 'Bearish' if rsi_val>65 or (macd_val<sig_val and macd_val<0.5)
-            else 'Neutral'
-        )
+    # === Pattern detection example ===
+    detected_pattern = 'None'
+    df['SPIN'] = ta.cdl_pattern(name='spinningtop', open_=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])
+    if df['SPIN'].iloc[-1] != 0:
+        detected_pattern = 'SPINNINGTOP'
 
-        # === Bullish markers ===
-        bullish_indices = []
-        if rsi_val < 30:
-            bullish_indices.append(len(df)-1)
-        if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] and df['MA20'].iloc[-2] < df['MA50'].iloc[-2]:
-            bullish_indices.append(len(df)-1)
+    # === Classification ===
+    rsi_val = df['RSI'].iloc[-1]
+    macd_val = df['MACD'].iloc[-1]
+    sig_val = df['Signal'].iloc[-1]
+    classification = (
+        'Bullish' if rsi_val<35 or (macd_val>sig_val and macd_val>-0.5)
+        else 'Bearish' if rsi_val>65 or (macd_val<sig_val and macd_val<0.5)
+        else 'Neutral'
+    )
 
-        df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
+    # === Candlestick Chart ===
+    df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
+    fig = plt.figure(figsize=(12,8))
+    gs = GridSpec(4,1, height_ratios=[3,1,1,1])
+    ax1 = fig.add_subplot(gs[0])
+    ohlc = df_plot[['Date_Num','Open','High','Low','Close']].values
+    candlestick_ohlc(ax1, ohlc, width=0.6, colorup=PALETTE[0], colordown=PALETTE[1])
+    ax1.plot(df_plot['Date_Num'], df_plot['MA20'], color=PALETTE[0], lw=2, label='MA20')
+    ax1.plot(df_plot['Date_Num'], df_plot['MA50'], color=PALETTE[1], lw=1.5, linestyle='--', label='MA50')
+    ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
+    detect_valid_channels(df_plot, ax1)
+    ax1.set_title(f"{ticker} | {freq_str.capitalize()} Chart")
+    ax1.legend(loc='upper left')
+    ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
 
-        fig = plt.figure(figsize=(12,8))
-        gs = GridSpec(4,1, height_ratios=[3,1,1,1])
+    ax2 = fig.add_subplot(gs[1], sharex=ax1)
+    ax2.bar(df_plot['Date_Num'], df_plot['Volume'], color='gray')
+    ax3 = fig.add_subplot(gs[2], sharex=ax1)
+    ax3.plot(df_plot['Date_Num'], df_plot['RSI'], color=PALETTE[4], label='RSI')
+    ax3.axhline(70, color='red', linestyle='--')
+    ax3.axhline(30, color='green', linestyle='--')
+    ax3.legend(loc='upper left')
+    ax4 = fig.add_subplot(gs[3], sharex=ax1)
+    ax4.plot(df_plot['Date_Num'], df_plot['MACD'], color=PALETTE[5], label='MACD')
+    ax4.plot(df_plot['Date_Num'], df_plot['Signal'], color=PALETTE[6], label='Signal')
+    ax4.legend(loc='upper left')
+    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    fig.autofmt_xdate()
+    plt.tight_layout()
+    chart_path = f"{ticker}_chart.png"
+    plt.savefig(chart_path, dpi=100)
+    plt.close(fig)
 
-        ax1 = fig.add_subplot(gs[0])
-        ohlc = df_plot[['Date_Num','Open','High','Low','Close']].values
-        candlestick_ohlc(ax1, ohlc, width=0.6, colorup=PALETTE[0], colordown=PALETTE[1])
-        ax1.plot(df_plot['Date_Num'], df_plot['MA20'], color=PALETTE[0], lw=2, label='MA20')
-        ax1.plot(df_plot['Date_Num'], df_plot['MA50'], color=PALETTE[1], lw=1.5, linestyle='--', label='MA50')
-        ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
-        detect_valid_channels(df_plot, ax1)
-
-        plot_start = len(df) - len(df_plot)
-        for idx in bullish_indices:
-            if idx >= plot_start:
-                idx_plot = idx - plot_start
-                ax1.scatter(df_plot['Date_Num'].iloc[idx_plot],
-                            df_plot['Low'].iloc[idx_plot] * 0.99,
-                            color='green', marker='^', s=80, zorder=5)
-
-        ax1.set_title(f"{ticker} | {freq_str.capitalize()} Chart")
-        ax1.set_ylabel("Price")
-        ax1.legend(loc='upper left')
-        ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
-
-        ax2 = fig.add_subplot(gs[1], sharex=ax1)
-        ax2.bar(df_plot['Date_Num'], df_plot['Volume'], color='gray')
-
-        ax3 = fig.add_subplot(gs[2], sharex=ax1)
-        ax3.plot(df_plot['Date_Num'], df_plot['RSI'], color=PALETTE[4], label='RSI')
-        ax3.axhline(70, color='red', linestyle='--')
-        ax3.axhline(30, color='green', linestyle='--')
-        ax3.legend(loc='upper left')
-
-        ax4 = fig.add_subplot(gs[3], sharex=ax1)
-        ax4.plot(df_plot['Date_Num'], df_plot['MACD'], color=PALETTE[5], label='MACD')
-        ax4.plot(df_plot['Date_Num'], df_plot['Signal'], color=PALETTE[6], label='Signal')
-        ax4.legend(loc='upper left')
-        ax4.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-
-        fig.autofmt_xdate()
-        plt.tight_layout()
-        chart_path = f"{ticker}_chart.png"
-        plt.savefig(chart_path, dpi=100)
-        plt.close(fig)
-
-        return classification, chart_path, rsi_val, macd_val, sig_val, "N/A", ""
-    except Exception as e:
-        st.error(f"{ticker} error: {e}")
-        return "Error", None, None, None, None, None, None
+    return classification, chart_path, rsi_val, macd_val, sig_val, detected_pattern, ""
 
 # === Streamlit App ===
 st.title("📊 Stock Pattern Analyzer")
@@ -161,7 +142,7 @@ if uploaded_file:
             ws_current.cell(row=row[0].row, column=6).value = patt
             ws_current.cell(row=row[0].row, column=7).value = strg
             if path and os.path.exists(path):
-                charts.append(path)
+                charts.append({'ticker': tkr, 'path': path, 'pattern': patt, 'period': per, 'freq': freq})
             ws_history.append([today,tkr,per,freq,cl,round(r or 0,2),round(m or 0,2),round(s or 0,2),patt])
 
     wb.save('stocks.xlsx')
@@ -194,13 +175,61 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
-    # ✅ Embed each chart page after the summary!
-    for chart in charts:
+    # === Add each stock's full section
+    for item in charts:
+        ticker, path, pattern, period, freq = item['ticker'], item['path'], item['pattern'], item['period'], item['freq']
+
+        if os.path.exists(path):
+            pdf.add_page()
+            pdf.set_font('Arial','B',14)
+            pdf.cell(0,10,f"{ticker} | Pattern: {pattern}",0,1,'C')
+            pdf.image(path, 10, 30, 190)
+
+        # Occurrences chart
+        df_full = yf.Ticker(ticker).history(period=period, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq.lower(),'1d'))
+        df_full = df_full[['Open','High','Low','Close']].dropna()
+        df_full['Date_Num'] = mdates.date2num(df_full.index.to_pydatetime())
+        result = ta.cdl_pattern(name='spinningtop', open_=df_full['Open'], high=df_full['High'], low=df_full['Low'], close=df_full['Close'])
+        occ_idx = np.where(result != 0)[0]
+        fig2, ax2 = plt.subplots(figsize=(8,4))
+        ax2.plot(df_full.index, df_full['Close'], label='Close')
+        if len(occ_idx):
+            ax2.scatter(df_full.index[occ_idx], df_full['Close'].iloc[occ_idx], color=ACCENT)
+        ax2.set_title(f"{ticker} Occurrences: {len(occ_idx)}")
+        tmp_occ = f"{ticker}_occ.png"
+        fig2.savefig(tmp_occ, dpi=100)
+        plt.close(fig2)
         pdf.add_page()
-        pdf.image(chart, 10, 30, 190)
+        pdf.image(tmp_occ, 10, 30, 190)
+        os.remove(tmp_occ)
+
+        # Top 20 pattern table
+        pattern_counts = {}
+        for name in dir(ta):
+            if name.startswith('cdl'):
+                try:
+                    r = ta.cdl_pattern(name=name.replace('cdl_',''), open_=df_full['Open'], high=df_full['High'], low=df_full['Low'], close=df_full['Close'])
+                    count = (r != 0).sum()
+                    if count > 0:
+                        pattern_counts[name.upper()] = count
+                except:
+                    continue
+        top_patterns = sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)[:20]
+        pdf.add_page()
+        pdf.set_font('Arial','B',12)
+        pdf.cell(0,10,f"{ticker} | Top 20 Patterns",0,1,'C')
+        pdf.ln(4)
+        pdf.set_font('Arial','B',10)
+        pdf.cell(60,8,'Pattern Name',1)
+        pdf.cell(30,8,'Occurrences',1)
+        pdf.ln()
+        pdf.set_font('Arial','',10)
+        for pname, pcount in top_patterns:
+            pdf.cell(60,8,pname,1)
+            pdf.cell(30,8,str(pcount),1)
+            pdf.ln()
 
     pdf.output("stock_report.pdf")
-
-    st.success("✅ Analysis complete! PDF includes your charts.")
+    st.success("✅ PDF is ready with all charts, occurrences, and tables!")
     with open("stock_report.pdf","rb") as f:
-        st.download_button("📄 Download PDF Report", f, file_name="stock_report.pdf")
+        st.download_button("📄 Download PDF", f, file_name="stock_report.pdf")
