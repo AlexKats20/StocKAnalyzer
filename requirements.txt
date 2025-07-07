@@ -4,6 +4,6 @@ openpyxl
 matplotlib
 pandas
 numpy
-ta-lib
 fpdf
 scikit-learn
+pandas-ta
