@@ -85,7 +85,7 @@ def analyze_stock(ticker, period, freq_str):
     st.write(f"⏳ Downloading data for {ticker} ({actual_period}, {freq_str})")
     df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
     df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-    df['Date_Num'] = mdates.date2num(df.index.to_pydatetime())
+    df['Date_Num'] = mdates.date2num(df.index)  # Fixed: Removed to_pydatetime()
 
     # Indicators
     df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
