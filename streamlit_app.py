@@ -1,6 +1,4 @@
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -79,51 +77,25 @@ def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
 
 # Stock Analysis
 def analyze_stock(ticker, period, freq_str):
-    freq_map = {'Daily': '1d', 'Weekly': '1wk', 'Monthly': '1mo'}
+    # Assume CSV is in the same directory as the app
+    csv_file = 'aapl_historical.csv'  # Update this file name if different
     period_map = {'1mo': 1, '3mo': 3, '6mo': 6, '1y': 12, '2y': 24, '5y': 60, 'max': 1000}
     days = period_map.get(period.lower(), 1000)
 
-    st.write(f"⏳ Fetching data for {ticker} ({period}, {freq_str})")
-    url = f"https://finance.yahoo.com/quote/{ticker}/history?p={ticker}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://finance.yahoo.com/'
-    }
+    st.write(f"⏳ Loading data for {ticker} from {csv_file} ({period}, {freq_str})")
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'data-test': 'historical-prices'})
-        if not table:
-            st.warning("Historical data table not found. Trying to load page manually might help (e.g., solve CAPTCHA).")
-            raise ValueError("Unable to locate historical data table.")
-
-        data = []
-        for row in table.find_all('tr')[1:]:  # Skip header
-            cols = row.find_all('td')
-            if len(cols) >= 6:
-                date = cols[0].text.strip()
-                try:
-                    date_obj = datetime.strptime(date, '%b %d, %Y')
-                    if days < 1000 and (datetime.now() - date_obj).days > days * 30:
-                        continue
-                    open_price = float(cols[1].text.replace(',', '').replace('--', '0'))
-                    high = float(cols[2].text.replace(',', '').replace('--', '0'))
-                    low = float(cols[3].text.replace(',', '').replace('--', '0'))
-                    close = float(cols[4].text.replace(',', '').replace('--', '0'))
-                    volume = int(cols[5].text.replace(',', '').replace('--', '0'))
-                    data.append([date_obj, open_price, high, low, close, volume])
-                except ValueError:
-                    continue
-
-        df = pd.DataFrame(data, columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        df = pd.read_csv(csv_file)
+        df['Date'] = pd.to_datetime(df['Date'])
+        if days < 1000:
+            end_date = datetime.now()
+            start_date = end_date - pd.DateOffset(months=days)
+            df = df[df['Date'] >= start_date]
+        df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']].dropna()
         if df.empty:
-            raise ValueError("No valid data extracted from the table.")
+            raise ValueError("No data available in CSV after filtering.")
         df['Date_Num'] = mdates.date2num(df['Date'])
         df = df.sort_values('Date', ascending=False).reset_index(drop=True)
-        st.write(f"Successfully fetched {len(df)} rows of data.")
+        st.write(f"Successfully loaded {len(df)} rows of data.")
 
         # Indicators
         df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
@@ -283,13 +255,13 @@ def analyze_stock(ticker, period, freq_str):
         return classification, fig, fig2, rsi_val, macd_val, sig_val, detected_pattern, strength, len(occ_idx)
 
     except Exception as e:
-        st.error(f"Error analyzing {ticker}: {str(e)}. Ensure internet connection and try manually loading the page to resolve CAPTCHA.")
+        st.error(f"Error analyzing {ticker}: {str(e)}. Ensure 'aapl_historical.csv' exists in the app directory and contains valid data.")
         return 'Neutral', None, None, 50, 0, 0, 'None', '', 0
 
 # Streamlit App
 st.title("Stock Pattern Analysis")
 st.write("Enter a stock ticker and select analysis parameters to view technical analysis results.")
-st.info("This app scrapes data from Yahoo Finance. For short periods (e.g., 1mo) with Monthly frequency, try longer periods or Daily/Weekly. A stable internet connection is required, and you may need to manually load the page to bypass CAPTCHA.")
+st.info("This app uses a static CSV file (e.g., 'aapl_historical.csv') downloaded from Yahoo Finance. Download the file manually from https://finance.yahoo.com/quote/AAPL/history/export, save it in the app directory, and ensure it has columns: Date, Open, High, Low, Close, Volume.")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL)", "AAPL")
 period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
