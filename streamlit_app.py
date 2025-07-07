@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 from datetime import datetime
 import pandas_ta as ta
 import matplotlib.dates as mdates
@@ -83,13 +84,22 @@ def analyze_stock(ticker, period, freq_str):
     actual_period = 'max' if period.lower() == 'max' else period
 
     st.write(f"⏳ Downloading data for {ticker} ({actual_period}, {freq_str})")
-    df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
-    if df.empty:
-        raise ValueError("No data returned for the specified ticker, period, or frequency.")
-    df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-    if len(df) < 14:  # Minimum for RSI (14) and partial MACD
-        st.warning(f"Insufficient data ({len(df)} rows) for {ticker}. Try a longer period (e.g., 3mo or 6mo) or Daily/Weekly frequency.")
-        raise ValueError("Insufficient data returned for the specified period and frequency.")
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
+            if df.empty:
+                raise ValueError("No data returned for the specified ticker, period, or frequency.")
+            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
+            if len(df) < 5:  # Minimum for basic indicators (e.g., RSI)
+                raise ValueError(f"Only {len(df)} rows of data available, which is insufficient.")
+            break
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                st.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                raise ValueError(f"Failed after {max_attempts} attempts: {str(e)}")
     
     df['Date_Num'] = mdates.date2num(df.index)
 
@@ -101,7 +111,7 @@ def analyze_stock(ticker, period, freq_str):
     df['RSI'] = ta.rsi(df['Close'], length=14)
     
     # Calculate MACD with dynamic parameters based on data length
-    min_periods = min(len(df), 26)  # Use available data, up to slow=26
+    min_periods = max(5, min(len(df), 26))  # Ensure at least 5 periods
     macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9)
     if macd_df is None or macd_df.empty or len(df) < min_periods:
         st.warning(f"MACD calculation requires {min_periods} periods but got {len(df)}. Using default values.")
@@ -253,7 +263,7 @@ def analyze_stock(ticker, period, freq_str):
 # Streamlit App
 st.title("Stock Pattern Analysis")
 st.write("Enter a stock ticker and select analysis parameters to view technical analysis results.")
-st.info("For short periods (e.g., 1mo) with Monthly frequency, select a longer period (e.g., 3mo or 6mo) or Daily/Weekly frequency to ensure sufficient data. This app uses free yfinance data.")
+st.info("For short periods (e.g., 1mo) with Monthly frequency, select a longer period (e.g., 3mo or 6mo) or Daily/Weekly frequency. The app uses free yfinance data and may retry on failure.")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL)", "AAPL")
 period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
