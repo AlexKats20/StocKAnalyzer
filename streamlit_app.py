@@ -15,6 +15,7 @@ import pandas_ta as ta
 from fpdf import FPDF
 from sklearn.linear_model import LinearRegression
 
+# === Streamlit config ===
 st.set_page_config(page_title="📈 Stock Pattern Analyzer")
 st.title("📈 Stock Pattern Analyzer (Streamlit Cloud Ready)")
 
@@ -28,6 +29,12 @@ if uploaded_file:
     PALETTE = tplt.colors
     ACCENT = '#ff6f00'
     plt.style.use('default')
+
+    candlestick_patterns = [
+        "doji", "dragonflydoji", "hammer", "invertedhammer",
+        "marubozu", "spinningtop", "engulfing", "morningstar",
+        "shootingstar", "eveningstar"
+    ]
 
     def draw_pattern_visual(ax, df, idx, pattern_name):
         bar_width = 0.6
@@ -94,7 +101,7 @@ if uploaded_file:
         df['Signal'] = df['MACD'].ewm(span=9).mean()
 
         matches = []
-        for name in ta.cdl_pattern._patterns.keys():
+        for name in candlestick_patterns:
             result = ta.cdl_pattern(name=name, open_=df['Open'], high_=df['High'],
                                     low_=df['Low'], close_=df['Close'])
             idxs = np.where(result != 0)[0]
@@ -107,21 +114,9 @@ if uploaded_file:
                         'strength': int(result.iloc[idx])
                     })
 
-        if matches:
-            detected_pattern = matches[-1]['name']
-        else:
-            detected_pattern = 'None'
-
+        detected_pattern = matches[-1]['name'] if matches else 'None'
         rsi_val, macd_val, sig_val = df['RSI'].iloc[-1], df['MACD'].iloc[-1], df['Signal'].iloc[-1]
         classification = 'Bullish' if rsi_val<35 or (macd_val>sig_val and macd_val>-0.5) else 'Bearish' if rsi_val>65 or (macd_val<sig_val and macd_val<0.5) else 'Neutral'
-
-        bullish_indices = []
-        for match in matches:
-            p = match['name'].upper()
-            if 'HAMMER' in p or 'ENGULFING' in p or 'MORNINGSTAR' in p:
-                if match['strength'] > 0:
-                    bullish_indices.append(match['index'])
-        if rsi_val < 30: bullish_indices.append(len(df)-1)
 
         df_plot = df.tail(250 if interval=='1d' else 52 if interval=='1wk' else 24)
         os.makedirs('charts', exist_ok=True)
@@ -163,41 +158,6 @@ if uploaded_file:
         ws.cell(row=row[0].row, column=6).value = patt
         pdf.add_page()
         pdf.image(path,10,30,190)
-        df_full = yf.Ticker(tkr).history(period=per, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq,'1d'))
-        df_full = df_full[['Open','High','Low','Close']].dropna()
-        pattern_counts, pattern_returns = {}, {}
-        for name in ta.cdl_pattern._patterns.keys():
-            result = ta.cdl_pattern(name=name, open_=df_full['Open'], high_=df_full['High'],
-                                    low_=df_full['Low'], close_=df_full['Close'])
-            idxs = np.where(result != 0)[0]
-            fwd1, fwd2 = [], []
-            for idx_p in idxs:
-                if idx_p+252 < len(df_full):
-                    fwd1.append((df_full['Close'].iloc[idx_p+252] - df_full['Close'].iloc[idx_p]) / df_full['Close'].iloc[idx_p])
-                if idx_p+504 < len(df_full):
-                    fwd2.append((df_full['Close'].iloc[idx_p+504] - df_full['Close'].iloc[idx_p]) / df_full['Close'].iloc[idx_p])
-            if len(idxs)>0:
-                pattern_counts[name] = len(idxs)
-                pattern_returns[name] = {'1Y': np.mean(fwd1)*100 if fwd1 else None, '2Y': np.mean(fwd2)*100 if fwd2 else None}
-
-        top_patterns = sorted(pattern_counts.items(), key=lambda x:x[1], reverse=True)[:20]
-        pdf.add_page()
-        pdf.set_font("Arial","B",12)
-        pdf.cell(0,10,f"{tkr} Top 20 Pattern Frequencies",0,1,"C")
-        pdf.cell(60,8,'Pattern',1)
-        pdf.cell(30,8,'Count',1)
-        pdf.cell(30,8,'1Y Avg %',1)
-        pdf.cell(30,8,'2Y Avg %',1)
-        pdf.ln()
-        pdf.set_font("Arial","",10)
-        for pname, pcount in top_patterns:
-            p1 = pattern_returns[pname]['1Y']
-            p2 = pattern_returns[pname]['2Y']
-            pdf.cell(60,8,pname,1)
-            pdf.cell(30,8,str(pcount),1)
-            pdf.cell(30,8,f"{p1:.2f}%" if p1 else '-',1)
-            pdf.cell(30,8,f"{p2:.2f}%" if p2 else '-',1)
-            pdf.ln()
 
     wb.save("stocks.xlsx")
     pdf.output("stock_report.pdf")
