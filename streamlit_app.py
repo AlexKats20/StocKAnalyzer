@@ -65,8 +65,7 @@ def analyze_stock(ticker, period, freq_str):
     df['Signal'] = macd['MACDs_12_26_9']
 
     # === Pattern detection ===
-    result = ta.cdl_pattern(name='spinningtop', open_=df['Open'], high_=df['High'],
-                            low_=df['Low'], close_=df['Close'])
+    result = ta.cdl_spinningtop(open_=df['Open'], high_=df['High'], low_=df['Low'], close_=df['Close'])
     detected_pattern = 'SPINNINGTOP' if np.any(result != 0) else 'None'
 
     # === Classification ===
@@ -182,8 +181,8 @@ if uploaded_file:
 
         df_full = yf.Ticker(ticker).history(period=period, interval={'daily':'1d','weekly':'1wk','monthly':'1mo'}.get(freq.lower(),'1d'))
         df_full = df_full[['Open','High','Low','Close']].dropna()
-        result = ta.cdl_pattern(name='spinningtop', open_=df_full['Open'], high_=df_full['High'],
-                                low_=df_full['Low'], close_=df_full['Close'])
+        result = ta.cdl_spinningtop(open_=df_full['Open'], high_=df_full['High'],
+                                    low_=df_full['Low'], close_=df_full['Close'])
         occ_idx = np.where(result != 0)[0]
         fig2, ax2 = plt.subplots(figsize=(8,4))
         ax2.plot(df_full.index, df_full['Close'], label='Close')
@@ -198,12 +197,17 @@ if uploaded_file:
         os.remove(tmp_occ)
 
         pattern_counts = {}
-        for name in ta.cdl_pattern._patterns.keys():
-            r = ta.cdl_pattern(name=name, open_=df_full['Open'], high_=df_full['High'],
-                               low_=df_full['Low'], close_=df_full['Close'])
-            count = np.sum(r != 0)
-            if count > 0:
-                pattern_counts[name.upper()] = int(count)
+        for name in dir(ta):
+            if name.startswith('cdl_'):
+                try:
+                    func = getattr(ta, name)
+                    r = func(open_=df_full['Open'], high_=df_full['High'],
+                             low_=df_full['Low'], close_=df_full['Close'])
+                    count = np.sum(r != 0)
+                    if count > 0:
+                        pattern_counts[name.upper()] = int(count)
+                except:
+                    continue
 
         top_patterns = sorted(pattern_counts.items(), key=lambda x: x[1], reverse=True)[:20]
         pdf.add_page()
@@ -222,5 +226,5 @@ if uploaded_file:
 
     pdf.output("stock_report.pdf")
     st.success("✅ PDF ready with all charts, occurrences & top 20 patterns!")
-    with open("stock_report.pdf","rb") as f:
+    with open("stock_report.pdf", "rb") as f:
         st.download_button("📄 Download PDF", f, file_name="stock_report.pdf")
