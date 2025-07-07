@@ -99,7 +99,6 @@ def analyze_stock(ticker, period, freq_str):
         ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
         detect_valid_channels(df_plot, ax1)
 
-        # Mark bullish
         plot_start = len(df) - len(df_plot)
         for idx in bullish_indices:
             if idx >= plot_start:
