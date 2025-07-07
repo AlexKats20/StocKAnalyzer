@@ -1,14 +1,14 @@
 import streamlit as st
-import yfinance as yf
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import time
 from datetime import datetime
 import pandas_ta as ta
 import matplotlib.dates as mdates
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Rectangle
-from mplfinance.original_flavor import candlestick_ohlc
 from sklearn.linear_model import LinearRegression
 
 # Custom Style & Palette
@@ -80,216 +80,228 @@ def detect_valid_channels(df, ax1, lookback=50, stride=5, min_slope=0.005):
 # Stock Analysis
 def analyze_stock(ticker, period, freq_str):
     freq_map = {'Daily': '1d', 'Weekly': '1wk', 'Monthly': '1mo'}
-    interval = freq_map.get(freq_str, '1d')
-    actual_period = 'max'  # Fetch max data first, then trim
+    period_map = {'1mo': 1, '3mo': 3, '6mo': 6, '1y': 12, '2y': 24, '5y': 60, 'max': 1000}
+    days = period_map.get(period.lower(), 1000)
 
-    st.write(f"⏳ Downloading data for {ticker} ({actual_period} initially, trimming to {period}, {freq_str})")
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            df = yf.Ticker(ticker).history(period=actual_period, interval=interval, auto_adjust=False, prepost=True)
-            if df.empty:
-                raise ValueError("No data returned for the specified ticker.")
-            df = df[['Open', 'High', 'Low', 'Close', 'Volume']].dropna()
-            # Trim to requested period if not 'max'
-            if period.lower() != 'max':
-                end_date = datetime.now()
-                start_date = end_date - pd.DateOffset(months={'1mo': 1, '3mo': 3, '6mo': 6, '1y': 12, '2y': 24, '5y': 60}[period.lower()])
-                df = df[df.index >= start_date]
-            if len(df) < 1:  # Minimum 1 row to proceed
-                raise ValueError(f"Only {len(df)} rows of data available after trimming, which is insufficient.")
-            st.write(f"Successfully fetched {len(df)} rows of data.")
-            break
-        except Exception as e:
-            if attempt < max_attempts - 1:
-                st.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in 5 seconds...")
-                time.sleep(5)
-            else:
-                raise ValueError(f"Failed after {max_attempts} attempts: {str(e)}")
-    
-    df['Date_Num'] = mdates.date2num(df.index)
+    st.write(f"⏳ Fetching data for {ticker} ({period}, {freq_str})")
+    url = f"https://finance.yahoo.com/quote/{ticker}/history?p={ticker}"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        table = soup.find('table', {'data-test': 'historical-prices'})
+        if not table:
+            raise ValueError("Historical data table not found on page.")
 
-    # Indicators
-    df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
-    df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
-    df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
+        data = []
+        for row in table.find_all('tr')[1:]:  # Skip header
+            cols = row.find_all('td')
+            if len(cols) >= 6:
+                date = cols[0].text.strip()
+                try:
+                    date_obj = datetime.strptime(date, '%b %d, %Y')
+                    if days < 1000 and (datetime.now() - date_obj).days > days * 30:
+                        continue
+                    open_price = float(cols[1].text.replace(',', '').replace('--', '0'))
+                    high = float(cols[2].text.replace(',', '').replace('--', '0'))
+                    low = float(cols[3].text.replace(',', '').replace('--', '0'))
+                    close = float(cols[4].text.replace(',', '').replace('--', '0'))
+                    volume = int(cols[5].text.replace(',', '').replace('--', '0'))
+                    data.append([date_obj, open_price, high, low, close, volume])
+                except ValueError:
+                    continue
 
-    df['RSI'] = ta.rsi(df['Close'], length=14) if len(df) >= 14 else pd.Series([50] * len(df), index=df.index)
-    
-    # Calculate MACD with dynamic parameters based on data length
-    min_periods = max(1, min(len(df), 26))  # Ensure at least 1 period
-    macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9) if len(df) >= min_periods else None
-    if macd_df is None or macd_df.empty:
-        st.warning(f"MACD requires {min_periods} periods but got {len(df)}. Using default values.")
-        df['MACD'] = 0
-        df['Signal'] = 0
-    else:
-        df['MACD'] = macd_df['MACD_12_{}_9'.format(min_periods)]
-        df['Signal'] = macd_df['MACDs_12_{}_9'.format(min_periods)]
+        df = pd.DataFrame(data, columns=['Date', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        if df.empty:
+            raise ValueError("No valid data extracted from the table.")
+        df['Date_Num'] = mdates.date2num(df['Date'])
+        df = df.sort_values('Date', ascending=False).reset_index(drop=True)
 
-    # Pattern detection using pandas_ta
-    matches = []
-    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name='all') if len(df) >= 3 else pd.DataFrame()
-    for col in candles.columns:
-        idxs = np.where(candles[col] != 0)[0]
-        for idx in idxs:
-            if (df.index[-1] - df.index[idx]).days <= 10:
-                matches.append({
-                    'name': col.upper(),
-                    'index': idx,
-                    'date': df.index[idx].date(),
-                    'strength': int(candles[col].iloc[idx])
-                })
+        # Indicators
+        df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
+        df['MA50'] = df['Close'].rolling(50, min_periods=1).mean()
+        df['MA100'] = df['Close'].rolling(100, min_periods=1).mean()
 
-    # Pattern fallback
-    if matches:
-        detected_pattern = matches[-1]['name']
-        strength = f"{detected_pattern}={matches[-1]['strength']}"
-    else:
-        window = min(60, len(df))
-        xw = np.arange(window).reshape(-1, 1)
-        yh = df['High'].iloc[-window:].values.reshape(-1, 1)
-        yl = df['Low'].iloc[-window:].values.reshape(-1, 1)
-        if window < 2:
-            detected_pattern = 'None'; strength = ''
+        df['RSI'] = ta.rsi(df['Close'], length=14) if len(df) >= 14 else pd.Series([50] * len(df), index=df.index)
+        
+        # Calculate MACD with dynamic parameters
+        min_periods = max(1, min(len(df), 26))
+        macd_df = ta.macd(df['Close'], fast=12, slow=min_periods, signal=9) if len(df) >= min_periods else None
+        if macd_df is None or macd_df.empty:
+            st.warning(f"MACD requires {min_periods} periods but got {len(df)}. Using default values.")
+            df['MACD'] = 0
+            df['Signal'] = 0
         else:
-            rh = LinearRegression().fit(xw, yh)
-            rl = LinearRegression().fit(xw, yl)
-            sh, sl = rh.coef_[0][0], rl.coef_[0][0]
-            if sh > 0.01 and sl > 0.01:
-                detected_pattern = 'UpwardChannel'
-            elif sh < -0.01 and sl < -0.01:
-                detected_pattern = 'DownwardChannel'
+            df['MACD'] = macd_df['MACD_12_{}_9'.format(min_periods)]
+            df['Signal'] = macd_df['MACDs_12_{}_9'.format(min_periods)]
+
+        # Pattern detection using pandas_ta
+        matches = []
+        candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name='all') if len(df) >= 3 else pd.DataFrame()
+        for col in candles.columns:
+            idxs = np.where(candles[col] != 0)[0]
+            for idx in idxs:
+                if (df['Date'].iloc[-1] - df['Date'].iloc[idx]).days <= 10:
+                    matches.append({
+                        'name': col.upper(),
+                        'index': idx,
+                        'date': df['Date'].iloc[idx].date(),
+                        'strength': int(candles[col].iloc[idx])
+                    })
+
+        # Pattern fallback
+        if matches:
+            detected_pattern = matches[-1]['name']
+            strength = f"{detected_pattern}={matches[-1]['strength']}"
+        else:
+            window = min(60, len(df))
+            xw = np.arange(window).reshape(-1, 1)
+            yh = df['High'].iloc[-window:].values.reshape(-1, 1)
+            yl = df['Low'].iloc[-window:].values.reshape(-1, 1)
+            if window < 2:
+                detected_pattern = 'None'; strength = ''
             else:
-                detected_pattern = 'None'
-            strength = ''
+                rh = LinearRegression().fit(xw, yh)
+                rl = LinearRegression().fit(xw, yl)
+                sh, sl = rh.coef_[0][0], rl.coef_[0][0]
+                if sh > 0.01 and sl > 0.01:
+                    detected_pattern = 'UpwardChannel'
+                elif sh < -0.01 and sl < -0.01:
+                    detected_pattern = 'DownwardChannel'
+                else:
+                    detected_pattern = 'None'
+                strength = ''
 
-    # Final classification
-    rsi_val = df['RSI'].iloc[-1] if not df['RSI'].isna().iloc[-1] else 50
-    macd_val = df['MACD'].iloc[-1] if not df['MACD'].isna().iloc[-1] else 0
-    sig_val = df['Signal'].iloc[-1] if not df['Signal'].isna().iloc[-1] else 0
-    classification = (
-        'Bullish' if rsi_val < 35 or (macd_val > sig_val and macd_val > -0.5)
-        else 'Bearish' if rsi_val > 65 or (macd_val < sig_val and macd_val < 0.5)
-        else 'Neutral'
-    )
+        # Final classification
+        rsi_val = df['RSI'].iloc[-1] if not df['RSI'].isna().iloc[-1] else 50
+        macd_val = df['MACD'].iloc[-1] if not df['MACD'].isna().iloc[-1] else 0
+        sig_val = df['Signal'].iloc[-1] if not df['Signal'].isna().iloc[-1] else 0
+        classification = (
+            'Bullish' if rsi_val < 35 or (macd_val > sig_val and macd_val > -0.5)
+            else 'Bearish' if rsi_val > 65 or (macd_val < sig_val and macd_val < 0.5)
+            else 'Neutral'
+        )
 
-    # Bullish markers
-    bullish_indices = []
-    for match in matches:
-        pattern = match['name'].upper()
-        idx = match['index']
-        if 'HAMMER' in pattern or 'ENGULFING' in pattern or 'MORNINGSTAR' in pattern:
-            if match['strength'] > 0:
-                bullish_indices.append(idx)
-    if rsi_val < 30:
-        bullish_indices.append(len(df) - 1)
-    if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] and df['MA20'].iloc[-2] < df['MA50'].iloc[-2]:
-        bullish_indices.append(len(df) - 1)
+        # Bullish markers
+        bullish_indices = []
+        for match in matches:
+            pattern = match['name'].upper()
+            idx = match['index']
+            if 'HAMMER' in pattern or 'ENGULFING' in pattern or 'MORNINGSTAR' in pattern:
+                if match['strength'] > 0:
+                    bullish_indices.append(idx)
+        if rsi_val < 30:
+            bullish_indices.append(len(df) - 1)
+        if df['MA20'].iloc[-1] > df['MA50'].iloc[-1] and df['MA20'].iloc[-2] < df['MA50'].iloc[-2]:
+            bullish_indices.append(len(df) - 1)
 
-    # Plot window
-    df_plot = df.tail(250 if interval == '1d' else 52 if interval == '1wk' else 24) if actual_period != 'max' else df
+        # Plot window
+        df_plot = df.tail(250 if freq_map.get(freq_str) == '1d' else 52 if freq_map.get(freq_str) == '1wk' else 24)
 
-    # Main Chart
-    fig = plt.figure(figsize=(12, 8))
-    gs = GridSpec(4, 1, height_ratios=[3, 1, 1, 1])
-    ax1 = fig.add_subplot(gs[0])
-    ohlc = df_plot[['Date_Num', 'Open', 'High', 'Low', 'Close']].values
-    candlestick_ohlc(ax1, ohlc, width=0.6, colorup=PALETTE[0], colordown=PALETTE[1])
+        # Main Chart
+        fig = plt.figure(figsize=(12, 8))
+        gs = GridSpec(4, 1, height_ratios=[3, 1, 1, 1])
+        ax1 = fig.add_subplot(gs[0])
+        ohlc = df_plot[['Date_Num', 'Open', 'High', 'Low', 'Close']].values
+        candlestick_ohlc(ax1, ohlc, width=0.6, colorup=PALETTE[0], colordown=PALETTE[1])
 
-    ax1.plot(df_plot['Date_Num'], df_plot['MA20'], color=PALETTE[0], lw=2, label='MA20')
-    ax1.plot(df_plot['Date_Num'], df_plot['MA50'], color=PALETTE[1], lw=1.5, linestyle='--', label='MA50')
-    ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
-    ax1.set_title(f"{ticker} | {freq_str} Chart")
-    ax1.set_ylabel('Price')
+        ax1.plot(df_plot['Date_Num'], df_plot['MA20'], color=PALETTE[0], lw=2, label='MA20')
+        ax1.plot(df_plot['Date_Num'], df_plot['MA50'], color=PALETTE[1], lw=1.5, linestyle='--', label='MA50')
+        ax1.plot(df_plot['Date_Num'], df_plot['MA100'], color=PALETTE[2], lw=1.5, linestyle=':', label='MA100')
+        ax1.set_title(f"{ticker} | {freq_str} Chart")
+        ax1.set_ylabel('Price')
 
-    detect_valid_channels(df_plot, ax1)
+        detect_valid_channels(df_plot, ax1)
 
-    if detected_pattern and detected_pattern != 'None':
-        raw_idx = matches[-1]['index'] if matches else len(df) - 1
+        if detected_pattern and detected_pattern != 'None':
+            raw_idx = matches[-1]['index'] if matches else len(df) - 1
+            plot_start = len(df) - len(df_plot)
+            if raw_idx >= plot_start:
+                idx_plot = raw_idx - plot_start
+                x0 = df_plot['Date_Num'].iloc[idx_plot]
+                y0 = df_plot['High'].iloc[idx_plot]
+                ax1.annotate(detected_pattern, xy=(x0, y0), xytext=(x0, y0 * 1.05),
+                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='black'),
+                             arrowprops=dict(arrowstyle='->'))
+                draw_pattern_visual(ax1, df_plot, idx_plot, detected_pattern)
+
+        # Plot bullish markers
         plot_start = len(df) - len(df_plot)
-        if raw_idx >= plot_start:
-            idx_plot = raw_idx - plot_start
-            x0 = df_plot['Date_Num'].iloc[idx_plot]
-            y0 = df_plot['High'].iloc[idx_plot]
-            ax1.annotate(detected_pattern, xy=(x0, y0), xytext=(x0, y0 * 1.05),
-                         bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='black'),
-                         arrowprops=dict(arrowstyle='->'))
-            draw_pattern_visual(ax1, df_plot, idx_plot, detected_pattern)
+        for idx in bullish_indices:
+            if idx >= plot_start and idx < len(df):
+                idx_plot = idx - plot_start
+                x0 = df_plot['Date_Num'].iloc[idx_plot]
+                y0 = df_plot['Low'].iloc[idx_plot] * 0.99
+                ax1.scatter(x0, y0, color='green', marker='^', s=80, zorder=5)
 
-    # Plot bullish markers
-    plot_start = len(df) - len(df_plot)
-    for idx in bullish_indices:
-        if idx >= plot_start and idx < len(df):
-            idx_plot = idx - plot_start
-            x0 = df_plot['Date_Num'].iloc[idx_plot]
-            y0 = df_plot['Low'].iloc[idx_plot] * 0.99
-            ax1.scatter(x0, y0, color='green', marker='^', s=80, zorder=5)
+        ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
+        ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
 
-    ax1.grid(True, linestyle=':', lw=0.5, alpha=0.4)
-    ax1.legend(loc='upper left', bbox_to_anchor=(1.02, 1))
+        ax2 = fig.add_subplot(gs[1], sharex=ax1)
+        ax2.bar(df_plot['Date_Num'], df_plot['Volume'], color='gray')
 
-    ax2 = fig.add_subplot(gs[1], sharex=ax1)
-    ax2.bar(df_plot['Date_Num'], df_plot['Volume'], color='gray')
+        ax3 = fig.add_subplot(gs[2], sharex=ax1)
+        ax3.plot(df_plot['Date_Num'], df_plot['RSI'], color=PALETTE[4], label='RSI')
+        ax3.axhline(70, color='red', linestyle='--')
+        ax3.axhline(30, color='green', linestyle='--')
+        ax3.legend(loc='upper left')
 
-    ax3 = fig.add_subplot(gs[2], sharex=ax1)
-    ax3.plot(df_plot['Date_Num'], df_plot['RSI'], color=PALETTE[4], label='RSI')
-    ax3.axhline(70, color='red', linestyle='--')
-    ax3.axhline(30, color='green', linestyle='--')
-    ax3.legend(loc='upper left')
+        ax4 = fig.add_subplot(gs[3], sharex=ax1)
+        ax4.plot(df_plot['Date_Num'], df_plot['MACD'], color=PALETTE[5], label='MACD')
+        ax4.plot(df_plot['Date_Num'], df['Signal'], color=PALETTE[6], label='Signal')
+        ax4.legend(loc='upper left')
+        ax4.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
 
-    ax4 = fig.add_subplot(gs[3], sharex=ax1)
-    ax4.plot(df_plot['Date_Num'], df_plot['MACD'], color=PALETTE[5], label='MACD')
-    ax4.plot(df_plot['Date_Num'], df['Signal'], color=PALETTE[6], label='Signal')
-    ax4.legend(loc='upper left')
-    ax4.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        fig.autofmt_xdate()
+        plt.tight_layout()
 
-    fig.autofmt_xdate()
-    plt.tight_layout()
+        # Pattern Occurrence Chart
+        df_occ = df.tail(250 if freq_map.get(freq_str) == '1d' else 52 if freq_map.get(freq_str) == '1wk' else 24)
+        candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name=detected_pattern.lower()) if len(df) >= 3 else pd.DataFrame()
+        occ_idx = np.where(candles.iloc[:, 0] != 0)[0] if not candles.empty else []
+        occ_idx_plot = [i for i in occ_idx if i >= len(df) - len(df_occ)]
 
-    # Pattern Occurrence Chart
-    df_occ = df.tail(250 if interval == '1d' else 52 if interval == '1wk' else 24) if actual_period != 'max' else df
-    candles = ta.cdl_pattern(df['Open'], df['High'], df['Low'], df['Close'], name=detected_pattern.lower()) if len(df) >= 3 else pd.DataFrame()
-    occ_idx = np.where(candles.iloc[:, 0] != 0)[0] if not candles.empty else []
-    occ_idx_plot = [i for i in occ_idx if i >= len(df) - len(df_occ)]
+        fig2, ax2 = plt.subplots(figsize=(8, 4))
+        ax2.plot(df_occ['Date'], df_occ['Close'], label='Close')
+        if occ_idx_plot:
+            occ_dates = df_occ['Date'].iloc[[i - (len(df) - len(df_occ)) for i in occ_idx_plot]]
+            occ_prices = df_occ['Close'].iloc[[i - (len(df) - len(df_occ)) for i in occ_idx_plot]]
+            ax2.scatter(occ_dates, occ_prices, color=ACCENT, label=detected_pattern)
+        ax2.set_title(f"{ticker} Occurrences of {detected_pattern}")
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        ax2.legend()
+        fig2.autofmt_xdate()
 
-    fig2, ax2 = plt.subplots(figsize=(8, 4))
-    ax2.plot(df_occ.index, df_occ['Close'], label='Close')
-    if occ_idx_plot:
-        occ_dates = df_occ.index[[i - (len(df) - len(df_occ)) for i in occ_idx_plot]]
-        occ_prices = df_occ['Close'].iloc[[i - (len(df) - len(df_occ)) for i in occ_idx_plot]]
-        ax2.scatter(occ_dates, occ_prices, color=ACCENT, label=detected_pattern)
-    ax2.set_title(f"{ticker} Occurrences of {detected_pattern}")
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    ax2.legend()
-    fig2.autofmt_xdate()
+        return classification, fig, fig2, rsi_val, macd_val, sig_val, detected_pattern, strength, len(occ_idx)
 
-    return classification, fig, fig2, rsi_val, macd_val, sig_val, detected_pattern, strength, len(occ_idx)
+    except Exception as e:
+        st.error(f"Error analyzing {ticker}: {str(e)}")
+        return 'Neutral', None, None, 50, 0, 0, 'None', '', 0
 
 # Streamlit App
 st.title("Stock Pattern Analysis")
 st.write("Enter a stock ticker and select analysis parameters to view technical analysis results.")
-st.info("For short periods (e.g., 1mo) with Monthly frequency, select a longer period (e.g., 3mo or 6mo) or Daily/Weekly frequency. The app uses free yfinance data and may retry on failure.")
+st.info("This app scrapes data from Yahoo Finance. For short periods (e.g., 1mo) with Monthly frequency, try longer periods or Daily/Weekly. Ensure a stable internet connection.")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL)", "AAPL")
 period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
 freq = st.selectbox("Frequency", ["Daily", "Weekly", "Monthly"], index=0)
 
 if st.button("Analyze"):
-    try:
-        classification, fig, fig2, rsi, macd, signal, pattern, strength, occ_count = analyze_stock(ticker, period, freq)
-        if fig and fig2:
-            st.subheader("Analysis Results")
-            st.write(f"**Classification**: {classification}")
-            st.write(f"**RSI**: {rsi:.2f}")
-            st.write(f"**MACD**: {macd:.2f}")
-            st.write(f"**Signal**: {signal:.2f}")
-            st.write(f"**Detected Pattern**: {pattern} {strength}")
-            st.subheader("Technical Chart")
-            st.pyplot(fig)
-            st.subheader(f"Pattern Occurrences: {occ_count}")
-            st.pyplot(fig2)
-            plt.close(fig)
-            plt.close(fig2)
-    except Exception as e:
-        st.error(f"Error analyzing {ticker}: {str(e)}")
+    classification, fig, fig2, rsi, macd, signal, pattern, strength, occ_count = analyze_stock(ticker, period, freq)
+    if fig and fig2:
+        st.subheader("Analysis Results")
+        st.write(f"**Classification**: {classification}")
+        st.write(f"**RSI**: {rsi:.2f}")
+        st.write(f"**MACD**: {macd:.2f}")
+        st.write(f"**Signal**: {signal:.2f}")
+        st.write(f"**Detected Pattern**: {pattern} {strength}")
+        st.subheader("Technical Chart")
+        st.pyplot(fig)
+        st.subheader(f"Pattern Occurrences: {occ_count}")
+        st.pyplot(fig2)
+        plt.close(fig)
+        plt.close(fig2)
