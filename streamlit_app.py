@@ -1,5 +1,3 @@
-# streamlit_app.py
-
 import streamlit as st
 import yfinance as yf
 import matplotlib.pyplot as plt
@@ -168,10 +166,8 @@ if uploaded_file:
 
     wb.save('stocks.xlsx')
 
-    # ✅ Debug: show collected charts
-    st.write("Charts collected:", charts)
+    st.write("✅ Charts collected:", charts)
 
-    # === Build PDF ===
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font('Arial','B',16)
@@ -198,13 +194,13 @@ if uploaded_file:
         pdf.cell(30,10,str(patt),1)
         pdf.ln()
 
-    # ✅ Embed chart pages
+    # ✅ Embed each chart page after the summary!
     for chart in charts:
         pdf.add_page()
         pdf.image(chart, 10, 30, 190)
 
     pdf.output("stock_report.pdf")
 
-    st.success("✅ Analysis complete!")
+    st.success("✅ Analysis complete! PDF includes your charts.")
     with open("stock_report.pdf","rb") as f:
         st.download_button("📄 Download PDF Report", f, file_name="stock_report.pdf")
