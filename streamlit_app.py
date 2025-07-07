@@ -86,7 +86,10 @@ def analyze_stock(ticker, period, freq_str):
     st.write(f"⏳ Fetching data for {ticker} ({period}, {freq_str})")
     url = f"https://finance.yahoo.com/quote/{ticker}/history?p={ticker}"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Referer': 'https://finance.yahoo.com/'
     }
     try:
         response = requests.get(url, headers=headers, timeout=10)
@@ -94,7 +97,8 @@ def analyze_stock(ticker, period, freq_str):
         soup = BeautifulSoup(response.text, 'html.parser')
         table = soup.find('table', {'data-test': 'historical-prices'})
         if not table:
-            raise ValueError("Historical data table not found on page.")
+            st.warning("Historical data table not found. Trying to load page manually might help (e.g., solve CAPTCHA).")
+            raise ValueError("Unable to locate historical data table.")
 
         data = []
         for row in table.find_all('tr')[1:]:  # Skip header
@@ -119,6 +123,7 @@ def analyze_stock(ticker, period, freq_str):
             raise ValueError("No valid data extracted from the table.")
         df['Date_Num'] = mdates.date2num(df['Date'])
         df = df.sort_values('Date', ascending=False).reset_index(drop=True)
+        st.write(f"Successfully fetched {len(df)} rows of data.")
 
         # Indicators
         df['MA20'] = df['Close'].rolling(20, min_periods=1).mean()
@@ -278,13 +283,13 @@ def analyze_stock(ticker, period, freq_str):
         return classification, fig, fig2, rsi_val, macd_val, sig_val, detected_pattern, strength, len(occ_idx)
 
     except Exception as e:
-        st.error(f"Error analyzing {ticker}: {str(e)}")
+        st.error(f"Error analyzing {ticker}: {str(e)}. Ensure internet connection and try manually loading the page to resolve CAPTCHA.")
         return 'Neutral', None, None, 50, 0, 0, 'None', '', 0
 
 # Streamlit App
 st.title("Stock Pattern Analysis")
 st.write("Enter a stock ticker and select analysis parameters to view technical analysis results.")
-st.info("This app scrapes data from Yahoo Finance. For short periods (e.g., 1mo) with Monthly frequency, try longer periods or Daily/Weekly. Ensure a stable internet connection.")
+st.info("This app scrapes data from Yahoo Finance. For short periods (e.g., 1mo) with Monthly frequency, try longer periods or Daily/Weekly. A stable internet connection is required, and you may need to manually load the page to bypass CAPTCHA.")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL)", "AAPL")
 period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
